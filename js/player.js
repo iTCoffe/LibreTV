@@ -1,67 +1,54 @@
 // 改进返回功能
-function goBack(e) {
-    if (e) e.preventDefault();
-
-    // 1. 首先检查是否从搜索页面进入的播放器 (优先使用localStorage中的记录)
-    const cameFromSearch = localStorage.getItem('cameFromSearch') === 'true';
-    const searchPageUrl = localStorage.getItem('searchPageUrl');
-
-    if (cameFromSearch && searchPageUrl) {
-        console.log('返回搜索页面:', searchPageUrl);
-        window.location.href = searchPageUrl;
-        // 清除标记，避免下次返回仍然去搜索页
-        localStorage.removeItem('cameFromSearch');
-        return;
-    }
-
-    // 继续原有的返回逻辑...
-    const referrer = document.referrer;
-
-    // 检查referrer是否包含搜索参数
-    if (referrer && (referrer.includes('?s=') || referrer.includes('/s='))) {
-        // 如果是从搜索页面来的，返回到搜索页面
-        console.log('根据referrer返回搜索页面:', referrer);
-        window.location.href = referrer;
-        return;
-    }
-
-    // 2. 尝试从URL参数获取返回地址
+function goBack(event) {
+    // 防止默认链接行为
+    if (event) event.preventDefault();
+    
+    // 1. 优先检查URL参数中的returnUrl
     const urlParams = new URLSearchParams(window.location.search);
     const returnUrl = urlParams.get('returnUrl');
-
+    
     if (returnUrl) {
-        // 存在明确的返回地址
-        console.log('使用returnUrl参数返回:', decodeURIComponent(returnUrl)); // decodeURIComponent added
-        window.location.href = decodeURIComponent(returnUrl); // decodeURIComponent added
+        // 如果URL中有returnUrl参数，优先使用
+        window.location.href = decodeURIComponent(returnUrl);
         return;
     }
-
-    // 3. 如果是在iframe中打开的，尝试关闭iframe
-    if (closeEmbeddedPlayer()) {
-        console.log('关闭了嵌入式播放器');
-        return;
-    }
-
-    // 4. 其次尝试从localStorage中获取上一页URL
+    
+    // 2. 检查localStorage中保存的lastPageUrl
     const lastPageUrl = localStorage.getItem('lastPageUrl');
     if (lastPageUrl && lastPageUrl !== window.location.href) {
-        console.log('从localStorage返回:', lastPageUrl);
         window.location.href = lastPageUrl;
         return;
     }
-
-    // 5. 检查referrer是否是有效的站内页面
-    if (referrer &&
-        referrer !== window.location.href &&
-        (referrer.includes(window.location.hostname) || referrer.startsWith('/'))) {
-        console.log('返回referrer页面:', referrer);
+    
+    // 3. 检查是否是从搜索页面进入的播放器
+    const referrer = document.referrer;
+    
+    // 检查 referrer 是否包含搜索参数
+    if (referrer && (referrer.includes('/s=') || referrer.includes('?s='))) {
+        // 如果是从搜索页面来的，返回到搜索页面
         window.location.href = referrer;
         return;
     }
-
-    // 6. 都不满足时，返回首页
-    console.log('返回首页');
-    window.location.href = '/';
+    
+    // 4. 如果是在iframe中打开的，尝试关闭iframe
+    if (window.self !== window.top) {
+        try {
+            // 尝试调用父窗口的关闭播放器函数
+            window.parent.closeVideoPlayer && window.parent.closeVideoPlayer();
+            return;
+        } catch (e) {
+            console.error('调用父窗口closeVideoPlayer失败:', e);
+        }
+    }
+    
+    // 5. 无法确定上一页，则返回首页
+    if (!referrer || referrer === '') {
+        window.location.href = '/';
+        return;
+    }
+    
+    // 6. 以上都不满足，使用默认行为：返回上一页
+    window.history.back();
 }
 
 // 页面加载时保存当前URL到localStorage，作为返回目标
@@ -316,6 +303,15 @@ function handleKeyboardShortcuts(e) {
             e.preventDefault();
         }
     }
+
+    // f 键 = 切换全屏
+    if (e.key === 'f' || e.key === 'F') {
+        if (art) {
+            art.fullscreen = !art.fullscreen;
+            showShortcutHint('切换全屏', 'fullscreen');
+            e.preventDefault();
+        }
+    }
 }
 
 // 显示快捷键提示
@@ -334,8 +330,10 @@ function showShortcutHint(text, direction) {
 
     if (direction === 'left') {
         iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>';
-    } else {
+    } else if (direction === 'right') {
         iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+    } else if (direction === 'fullscreen') {
+        iconElement.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>';
     }
 
     // 显示提示
@@ -401,17 +399,17 @@ function initPlayer(videoUrl) {
         muted: false,
         autoplay: true,
         pip: true,
-        autoSize: true,
+        autoSize: false,
         autoMini: true,
         screenshot: true,
         setting: true,
         loop: false,
-        flip: true,
+        flip: false,
         playbackRate: true,
-        aspectRatio: true,
+        aspectRatio: false,
         fullscreen: true,
         fullscreenWeb: false,
-        subtitleOffset: true,
+        subtitleOffset: false,
         miniProgressBar: true,
         mutex: true,
         backdrop: true,
@@ -559,7 +557,7 @@ function initPlayer(videoUrl) {
         }
     });
 
-    art.on('video:loadmetadata', function() {
+    art.on('video:loadedmetadata', function() {
         document.getElementById('loading').style.display = 'none';
         videoHasEnded = false; // 视频加载时重置结束标志
         // 优先使用URL传递的position参数
@@ -649,9 +647,8 @@ function initPlayer(videoUrl) {
         // 绑定双击事件到视频容器
         if (art.video) {
             art.video.addEventListener('dblclick', () => {
-                if (art.fullScreen && typeof art.fullScreen.toggle === 'function') {
-                    art.fullScreen.toggle();
-                }
+                art.fullscreen = !art.fullscreen;
+                art.play();
             });
         }
     });
@@ -851,15 +848,7 @@ function playEpisode(index) {
     currentUrl.searchParams.delete('position');
     window.history.replaceState({}, '', currentUrl.toString());
 
-    // 使用art.switch切换视频源
-    if (art) {
-        // 使用art.switch切换视频URL
-        art.switch = url;
-    } else {
-        console.error('播放器实例不存在');
-        // 尝试重新初始化剧集
-        initPlayer(url);
-    }
+    initPlayer(url);
 
     // 更新UI
     updateEpisodeInfo();
@@ -1146,6 +1135,7 @@ function startProgressSaveInterval() {
 
 // 保存当前播放进度
 function saveCurrentProgress() {
+    console.log('保存当前播放进度');
     if (!art || !art.video) return;
     const currentTime = art.video.currentTime;
     const duration = art.video.duration;
@@ -1184,7 +1174,7 @@ function saveCurrentProgress() {
                 }
             }
         } catch (e) {
-            // 忽略 viewingHistory 更新错误
+            console.log('同步更新 viewingHistory 中的进度失败', e);
         }
     } catch (e) {
         console.error('保存播放进度失败', e);
